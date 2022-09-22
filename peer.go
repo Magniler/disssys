@@ -25,8 +25,8 @@ func (p Peer) FloodMessage(msg *nt.Ledger) {
 }
 
 func (p Peer) FloodTransaction(tx *Transaction) {
-	for i, e := range p.connections {
-		conn, err := net.Dial(tcp, e.address)
+	for i, c := range p.connections {
+		conn, err := net.Dial(tcp, c.address)
 		encoder := gob.NewEncoder(conn)
 		encoder.Encode(msg)
 	}
@@ -39,7 +39,7 @@ func (p Peer) Listen(c *chan account.Ledger) {
 		if err != nil {
 			panic(err)
 		}
-		go HandleConnection(conn)
+		msg := conn.
 	}
 }
 
@@ -48,9 +48,6 @@ func (p Peer) Init() {
 	p.Listen()
 }
 
-func (p Peer) HandleConnection(conn net.conn) {
-	//Open Previous Conneciton
-}
 
 func (p Peer) TryToConnect() {
 	for i, conn := range p.connections {
