@@ -5,6 +5,7 @@ import (
 	"connection"
 	"encoding/gob"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -30,16 +31,17 @@ func (p Peer) FloodTransaction(tx *account.Transaction) {
 
 func (p Peer) SendMessage(msgType string, connection connection.Connection) {
 	switch msgType {
-	case "New Connection":
+	case "New peer":
 		msg := msgType + ":" + connection.Address
 		connection.Encoder.Encode(msg)
-		return
-	case "Transaction":
 		return
 	case "Ask for connections":
 		for _, c := range p.connections {
 			msg := msgType + ":" + c.Address
-			c.Encoder.Encode(msg)
+			err := c.Encoder.Encode(msg)
+			if err != nil {
+				panic(-1)
+			}
 		}
 		return
 	}
@@ -55,10 +57,36 @@ func (p Peer) Listen() {
 
 }
 
+// If the peer is  unable to connect to the network for any reason
+// it simply makes it own
+func (p Peer) MakeOwnNetwork() {
+	return
+}
+
+// Peer tries to connect to the network on addr:port.
+// If it fails it initializes its own network
+func (p Peer) Connect(addr string, port int) {
+	fullAddr := addr + ":" + strconv.Itoa(port)
+	c, err := net.Dial("tcp", fullAddr)
+	if err != nil {
+		print("Failed to establish conneciton, initialising own network")
+		p.MakeOwnNetwork()
+	}
+	newConnection := &connection.Connection{
+		Connection: &c,
+		Address:    fullAddr,
+		Decoder:    gob.NewDecoder(c),
+		Encoder:    gob.NewEncoder(c),
+	}
+	p.connections = append(p.connections, *newConnection)
+}
+
 type String struct {
 	Msgfmt string
 }
 
+// Decides what to do with a newly established connection, depending on the
+// type. Type is specified by the first
 func (p Peer) HandleConnection(conn net.Conn) {
 	defer conn.Close()
 	decoder := gob.NewDecoder(conn)
@@ -70,7 +98,7 @@ func (p Peer) HandleConnection(conn net.Conn) {
 	input := strings.Split(inputfmt.Msgfmt, ":")
 	msgType := input[0]
 	switch msgType {
-	case "New Connection":
+	case "New Peer":
 		newConnection := &connection.Connection{
 			Connection: &conn,
 			Address:    input[1],
@@ -84,8 +112,5 @@ func (p Peer) HandleConnection(conn net.Conn) {
 	case "Ask for connections":
 		return
 	}
-}
 
-func (p Peer) Init() {
-	p.Listen()
 }
