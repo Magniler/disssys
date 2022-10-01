@@ -4,7 +4,9 @@ import (
 	"account"
 	"connection"
 	"encoding/gob"
+	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -51,6 +53,7 @@ func (p Peer) Listen() {
 	l, _ := net.Listen("tcp", p.address)
 	defer l.Close()
 	for {
+		fmt.Println("Now listening on " + p.address)
 		conn, _ := l.Accept()
 		go p.HandleConnection(conn)
 	}
@@ -60,7 +63,28 @@ func (p Peer) Listen() {
 // If the peer is  unable to connect to the network for any reason
 // it simply makes it own
 func (p Peer) MakeOwnNetwork() {
-	return
+	name, _ := os.Hostname()
+	ip, _ := net.LookupHost(name)
+	// We need to join the ip to make into one string
+	hostPort := ip[0] + ":" + "1616"
+	// :0 os suppossed to be an ephereal port, which means the os
+	// finds the next avaivable port
+	addr, err := net.ResolveTCPAddr("tcp", hostPort)
+	if err != nil {
+		panic(-1)
+	}
+	conn, err := net.Dial("tcp", addr.String())
+	if err != nil {
+		panic(-1)
+	}
+	ownConnection := connection.Connection{
+		Connection: &conn,
+		Address:    addr.String(),
+		Decoder:    gob.NewDecoder(conn),
+		Encoder:    gob.NewEncoder(conn),
+	}
+	p.connections = append(p.connections, ownConnection)
+	p.Listen()
 }
 
 // Peer tries to connect to the network on addr:port.
@@ -69,8 +93,9 @@ func (p Peer) Connect(addr string, port int) {
 	fullAddr := addr + ":" + strconv.Itoa(port)
 	c, err := net.Dial("tcp", fullAddr)
 	if err != nil {
-		print("Failed to establish conneciton, initialising own network")
+		fmt.Println("Failed to establish connection, initialising own network")
 		p.MakeOwnNetwork()
+		return
 	}
 	newConnection := &connection.Connection{
 		Connection: &c,
@@ -78,8 +103,9 @@ func (p Peer) Connect(addr string, port int) {
 		Decoder:    gob.NewDecoder(c),
 		Encoder:    gob.NewEncoder(c),
 	}
+	// TODO: Right now it does not add its own conneciton to its lis of
+	// connections
 	p.connections = append(p.connections, *newConnection)
-}
 
 type String struct {
 	Msgfmt string
@@ -111,6 +137,6 @@ func (p Peer) HandleConnection(conn net.Conn) {
 		return
 	case "Ask for connections":
 		return
+		}
 	}
-
 }
