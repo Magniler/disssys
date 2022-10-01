@@ -10,22 +10,38 @@ import (
 
 type Peer struct {
 	address     string
-	ledger      account.Ledger
+	ledger      *account.Ledger
 	connections []connection.Connection
 }
 
-func (p Peer) UpdateLedger(tx account.Transaction) {
+func (p Peer) UpdateLedger(tx *account.Transaction) {
 	//Need to do some checks, but what?
-	ledger := &p.ledger
+	ledger := p.ledger
 	ledger.Transact(tx)
 }
 
 func (p Peer) FloodTransaction(tx *account.Transaction) {
 	for _, c := range p.connections {
 		conn := c.Connection
-		encoder := gob.NewEncoder(conn)
+		encoder := gob.NewEncoder(*conn)
 		encoder.Encode(tx)
-		//Does this send the transaction on the network?
+	}
+}
+
+func (p Peer) SendMessage(msgType string, connection connection.Connection) {
+	switch msgType {
+	case "New Connection":
+		msg := msgType + ":" + connection.Address
+		connection.Encoder.Encode(msg)
+		return
+	case "Transaction":
+		return
+	case "Ask for connections":
+		for _, c := range p.connections {
+			msg := msgType + ":" + c.Address
+			c.Encoder.Encode(msg)
+		}
+		return
 	}
 }
 
@@ -54,7 +70,7 @@ func (p Peer) HandleConnection(conn net.Conn) {
 	input := strings.Split(inputfmt.Msgfmt, ":")
 	msgType := input[0]
 	switch msgType {
-	case "New connection":
+	case "New Connection":
 		newConnection := &connection.Connection{
 			Connection: &conn,
 			Address:    input[1],
@@ -62,16 +78,11 @@ func (p Peer) HandleConnection(conn net.Conn) {
 			Encoder:    gob.NewEncoder(conn),
 		}
 		p.connections = append(p.connections, *newConnection)
-	case "transaction":
+		return
+	case "Transaction":
 		return
 	case "Ask for connections":
 		return
-	}
-}
-
-func (p Peer) floodMessage(msg string) {
-	for _, c := range p.connections {
-		c.Encoder.Encode(msg)
 	}
 }
 
