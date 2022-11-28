@@ -6,18 +6,42 @@ import (
 	"encoding/gob"
 	"fmt"
 	"net"
-	"os"
 	"strconv"
 	"strings"
+	"utils"
 )
 
 type Peer struct {
-	Address     string
-	Ledger      *account.Ledger
-	Connections []connection.Connection
+	Address          string
+	Ledger           *account.Ledger
+	Connections      []connection.Connection
+	AddressesToConns map[string]connection.Connection
 }
 
-func (p Peer) UpdateLedger(tx *account.Transaction) {
+type String struct {
+	Msgfmt string
+}
+
+// initialize an empty peer
+func (p Peer) Init() {
+	l := p.ListenInitial()
+	addr, port := utils.GetHostInfo(l)
+	p.Address = addr + ":" + port
+	p.Connections = make([]connection.Connection, 0)
+	p.AddressesToConns = make(map[string]connection.Connection, 0)
+	p.Ledger = account.MakeLedger()
+
+	ownConnection := connection.Connection{
+		Connection: nil,
+		Address:    p.Address,
+		Decoder:    nil,
+		Encoder:    nil,
+	}
+
+	p.Connections = append(p.Connections, ownConnection)
+}
+
+func (p Peer) ConductTransaction(tx *account.Transaction) {
 	//Need to do some checks, but what?
 	ledger := p.Ledger
 	ledger.Transact(tx)
@@ -25,32 +49,65 @@ func (p Peer) UpdateLedger(tx *account.Transaction) {
 
 func (p Peer) FloodTransaction(tx *account.Transaction) {
 	for _, c := range p.Connections {
-		conn := c.Connection
-		encoder := gob.NewEncoder(*conn)
-		encoder.Encode(tx)
+		c.Encoder.Encode("Conduct Transaction")
+		c.Encoder.Encode(tx)
 	}
 }
 
-func (p Peer) SendMessage(msgType string, connection connection.Connection) {
+func (p Peer) JoinNetwork(firstConnection *connection.Connection) {
+	err := firstConnection.Encoder.Encode("Ask for connections")
+
+	if err != nil {
+		panic(-1)
+	}
+
+	var fmt map[string]connection.Connection
+	err = firstConnection.Decoder.Decode(&fmt)
+
+	if err != nil {
+		panic(-1)
+	}
+
+	for k := range fmt {
+		conn, err := net.Dial("tcp", k)
+		if err != nil {
+			panic(-1)
+		}
+		p.Connections = append(p.Connections, connection.Connection{
+			Connection: &conn,
+			Address:    k,
+			Decoder:    gob.NewDecoder(conn),
+			Encoder:    gob.NewEncoder(conn),
+		})
+
+	}
+
+}
+
+func (p Peer) SendMessage(msgType string, connection connection.Connection, tx ...account.Transaction) {
 	switch msgType {
 	case "New peer":
-		msg := msgType + ":" + connection.Address
-		connection.Encoder.Encode(msg)
+		connection.Encoder.Encode(msgType)
+		connection.Encoder.Encode(p.Address)
 		return
 	case "Ask for connections":
 		for _, c := range p.Connections {
-			msg := msgType + ":" + c.Address
-			err := c.Encoder.Encode(msg)
-			if err != nil {
-				panic(-1)
-			}
+			c.Encoder.Encode(msgType)
+			c.Encoder.Encode(c.Address)
+			// How do i do this? Do i ask for the connecitons for each peer?
+			// And then decode it in a loop?
 		}
 		return
+	case "Conduct Transaction":
+		for _, transaction := range tx {
+			p.ConductTransaction(&transaction)
+		}
 	}
 }
 
-func (p Peer) Listen() {
-	l, err := net.Listen("tcp", p.Address)
+//Initialises the required data and lets the peer listen on a random port
+func (p Peer) ListenInitial() net.Listener {
+	l, err := net.Listen("tcp", ":")
 	if err != nil {
 		defer l.Close()
 	}
@@ -58,6 +115,12 @@ func (p Peer) Listen() {
 		panic(0)
 	}
 	println("Now listening on " + l.Addr().String())
+	go p.listenUtil(l)
+	return l
+}
+
+//Handles the actual listening
+func (p Peer) listenUtil(l net.Listener) {
 	for {
 		conn, _ := l.Accept()
 		println("Got at connection from ", conn.RemoteAddr().String())
@@ -68,31 +131,12 @@ func (p Peer) Listen() {
 // If the peer is  unable to connect to the network for any reason
 // it simply makes it own
 func (p Peer) MakeOwnNetwork() {
-	name, _ := os.Hostname()
-	ip, _ := net.LookupHost(name)
-	// We need to join the ip to make into one string
-	hostPort := ip[0] + ":" + "16160"
-	// :16160 is chosen at random
-	// TODO: Make it soo the port isn't hardcoded
-	addr, err := net.ResolveTCPAddr("tcp", hostPort)
-	if err != nil {
-		fmt.Println(err)
-		panic(-1)
-	}
-	ownConnection := connection.Connection{
-		Connection: nil,
-		Address:    addr.String(),
-		Decoder:    nil,
-		Encoder:    nil,
-	}
-	p.Connections = append(p.Connections, ownConnection)
-	p.Listen()
+	fmt.Println("Listening on port " + strings.Split(p.Address, ":")[0])
 }
 
 // Peer tries to connect to the network on addr:port.
 // If it fails it initializes its own network
 func (p Peer) Connect(addr string, port int) {
-	p.Connections = make([]connection.Connection, 0)
 	fullAddr := addr + ":" + strconv.Itoa(port)
 	c, err := net.Dial("tcp", fullAddr)
 	if err != nil {
@@ -100,47 +144,75 @@ func (p Peer) Connect(addr string, port int) {
 		p.MakeOwnNetwork()
 		return
 	}
-	newConnection := &connection.Connection{
+	firstConnection := &connection.Connection{
 		Connection: &c,
-		Address:    c.LocalAddr().String(),
+		Address:    c.RemoteAddr().String(),
 		Decoder:    gob.NewDecoder(c),
 		Encoder:    gob.NewEncoder(c),
 	}
-	println(c.LocalAddr().String())
-	// TODO: Right now it does not add its own conneciton to its lis of
-	// connections
-	p.Connections = append(p.Connections, *newConnection)
+	p.Connections = append(p.Connections, *firstConnection)
+	p.JoinNetwork(firstConnection)
 }
 
-type String struct {
-	Msgfmt string
-}
-
-// Decides what to do with a newly established connection, depending on the
-// type. Type is specified by the first
-func (p Peer) HandleConnection(conn net.Conn) {
+func (p Peer) HandleNewConnection(conn net.Conn) {
 	defer conn.Close()
-	decoder := gob.NewDecoder(conn)
+	newConnection := &connection.Connection{
+		Connection: &conn,
+		Address:    conn.LocalAddr().String(),
+		Decoder:    gob.NewDecoder(conn),
+		Encoder:    gob.NewEncoder(conn),
+	}
+	p.Connections = append(p.Connections, *newConnection)
+
+}
+
+// Decides what to do with a established connection, depending on the
+// type. Type is specified by the first part of the input from the conn
+// Object
+func (p Peer) HandleConnection(connNew net.Conn) {
+	address := connNew.RemoteAddr().String()
+	connOld, isPresent := p.AddressesToConns[address]
+	if !isPresent {
+		//This is a new connection!
+		p.HandleNewConnection(connNew)
+		return
+	}
 	inputfmt := &String{}
-	err := decoder.Decode(inputfmt)
+	err := connOld.Decoder.Decode(inputfmt)
 	if err != nil {
 		panic(-1)
 	}
-	input := strings.Split(inputfmt.Msgfmt, ":")
-	msgType := input[0]
+	msgType := inputfmt.Msgfmt
 	switch msgType {
-	case "New Peer":
+	case "New Peer joined":
+		//TODO: Find out how to add a new peers connection
+		inputfmt := &Peer{}
+		connOld.Decoder.Decode(inputfmt)
+		newConn, _ := net.Dial("tcp", inputfmt.Address)
 		newConnection := &connection.Connection{
-			Connection: &conn,
-			Address:    input[1],
-			Decoder:    decoder,
-			Encoder:    gob.NewEncoder(conn),
+			Connection: &newConn,
+			Address:    inputfmt.Address,
+			Decoder:    gob.NewDecoder(newConn),
+			Encoder:    gob.NewEncoder(newConn),
 		}
 		p.Connections = append(p.Connections, *newConnection)
+		p.AddressesToConns[inputfmt.Address] = *newConnection
 		return
-	case "Transaction":
+	case "Conduct transaction":
+		inputfmt := &account.Transaction{}
+		err := connOld.Decoder.Decode(inputfmt)
+		if err != nil {
+			panic(-1)
+		}
+		transaction := inputfmt
+		p.Ledger.Transact(transaction)
 		return
 	case "Ask for connections":
+		var addresses []string
+		for k := range p.AddressesToConns {
+			addresses = append(addresses, k)
+		}
+		connOld.Encoder.Encode(addresses)
 		return
 	}
 }

@@ -24,6 +24,10 @@ func MakeLedger() *Ledger {
 func (l *Ledger) Transact(t *Transaction) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
-	l.Accounts[t.From] -= t.Amount
-	l.Accounts[t.To] += t.Amount
+	_, toFound := l.Accounts[t.To]
+	_, fromFound := l.Accounts[t.From]
+	if toFound && fromFound {
+		l.Accounts[t.From] -= t.Amount
+		l.Accounts[t.To] += t.Amount
+	}
 }

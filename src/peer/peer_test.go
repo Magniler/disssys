@@ -10,8 +10,7 @@ import (
 
 func ExamplePeer_MakeOwnNetwork() {
 	p := peer.Peer{}
-	go p.Connect("Giberish", 42)
-	time.Sleep(5 * time.Second)
+	p.Connect("Giberish", 42)
 	//Output: Failed to establish connection, initializing own network
 }
 
